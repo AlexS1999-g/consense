@@ -4,17 +4,20 @@ import {
   Send, Sparkles, Sliders, Monitor, Smartphone,
   Terminal, Globe, Zap, History, Menu, X, Trash2,
   ChevronLeft, LayoutGrid, LogOut, User as UserIcon,
-  ToggleRight, ToggleLeft, ArrowRight, RotateCcw, Copy, Download, GitFork, Plus, FileText, Layers, HelpCircle
+  ToggleRight, ToggleLeft, ArrowRight, RotateCcw, Copy, Download, GitFork, Plus, FileText, Layers, HelpCircle, Settings
 } from 'lucide-react'
 import StarField from './components/StarField'
 import { MockAIService } from './services/MockAIService'
 import { OllamaService } from './services/OllamaService'
+import { OpenAIService } from './services/OpenAIService'
 import { AuthService } from './services/AuthService'
 import { AuthModal } from './components/AuthModal'
 import TemplateManager from './components/TemplateManager'
 import BuildLogs from './components/BuildLogs'
 import UserGuide from './components/UserGuide'
-import DiffView from './components/DiffView'
+import SettingsModal from './components/SettingsModal'
+
+import { PROMPT_MODES } from './data/PromptModes'
 import './App.css'
 
 // ... (StreamingText and StructuredOutput components remain same)
@@ -46,6 +49,10 @@ const StreamingText = ({ text, speed = 10 }) => {
   const [displayedText, setDisplayedText] = useState('')
 
   useEffect(() => {
+    if (!text) {
+      setDisplayedText('');
+      return;
+    }
     setDisplayedText('')
     let i = 0
     const interval = setInterval(() => {
@@ -64,6 +71,8 @@ const StreamingText = ({ text, speed = 10 }) => {
 
 // Component to render the structured Idea Map
 const StructuredOutput = ({ draft, previousDraft, showDiff }) => {
+  if (!draft) return null; // Safety check
+
   return (
     <div style={{
       display: 'flex',
@@ -108,11 +117,22 @@ const StructuredOutput = ({ draft, previousDraft, showDiff }) => {
         </div>
 
         <div style={{ gridColumn: 'span 2' }}>
+          <div style={{ fontSize: '0.65rem', color: '#666', letterSpacing: '0.1em', marginBottom: '4px' }}>06. NEGATIVE CONSTRAINTS</div>
+          <div style={{ fontSize: '0.85rem', color: '#ff6b6b' }}>
+            {draft.prompt_mcp?.negatives?.exclude?.length > 0 ? (
+              draft.prompt_mcp.negatives.exclude.slice(0, 4).join(", ") + (draft.prompt_mcp.negatives.exclude.length > 4 ? "..." : "")
+            ) : (
+              <span style={{ opacity: 0.5, color: '#888' }}>None active</span>
+            )}
+          </div>
+        </div>
+
+        <div style={{ gridColumn: 'span 2' }}>
           <div style={{ fontSize: '0.65rem', color: '#666', letterSpacing: '0.1em', marginBottom: '4px' }}>07. FEATURES</div>
           <div style={{ fontSize: '0.85rem', color: '#ccc' }}>
-            {draft.functional_components.map((f, i) => (
+            {draft.functional_components && Array.isArray(draft.functional_components) ? draft.functional_components.map((f, i) => (
               <span key={i} style={{ display: 'inline-block', marginRight: '12px', opacity: 0.8 }}>• {f}</span>
-            ))}
+            )) : <span>No specific features defined.</span>}
           </div>
         </div>
       </div>
@@ -610,27 +630,7 @@ const SettingsPanel = ({ state, onChange, isMobile, currentUser }) => {
             </div>
           </div>
 
-          {/* Provider Toggle */}
-          <div style={{ flex: 1, minWidth: isMobile ? '100%' : '140px' }}>
-            <label style={{ display: 'block', fontSize: '0.7rem', color: '#888', marginBottom: '8px', letterSpacing: '0.05em' }}>PROVIDER</label>
-            <select
-              value={state.use_ollama ? "ollama" : "mock"}
-              onChange={(e) => onChange({ ...state, use_ollama: e.target.value === "ollama" })}
-              style={{
-                width: '100%',
-                background: '#000',
-                color: state.use_ollama ? '#4ade80' : '#ccc',
-                border: '1px solid #333',
-                borderRadius: '6px',
-                padding: '6px',
-                fontSize: '0.8rem',
-                outline: 'none'
-              }}
-            >
-              <option value="mock">Consense Simulated</option>
-              <option value="ollama">Local (Ollama)</option>
-            </select>
-          </div>
+          {/* Legacy Provider Toggle Removed - Use Settings Modal (Gear Icon) */}
         </div>
 
         {/* Templates Section (Only for Logged In Users) */}
@@ -749,14 +749,7 @@ function App() {
 
   // MCP UI State
   const [showSettings, setShowSettings] = useState(false)
-  const [uiState, setUiState] = useState({
-    depth: 'intermediate',
-    tone: 'neutral',
-    abstraction_level: 'medium',
-    model_family: 'llm',
-    exclude_hype: false,
-    use_ollama: false
-  })
+
 
   const placeholderText = useTypewriter(examplePrompts, 35, 3000)
 
@@ -772,11 +765,54 @@ function App() {
   const [isTemplateManagerOpen, setIsTemplateManagerOpen] = useState(false)
   const [isBuildLogsOpen, setIsBuildLogsOpen] = useState(false)
   const [isUserGuideOpen, setIsUserGuideOpen] = useState(false)
+  const [isSettingsModalOpen, setIsSettingsModalOpen] = useState(false)
+
+  // Global Config (Provider & Keys)
+  const [globalConfig, setGlobalConfig] = useState(() => {
+    const saved = localStorage.getItem('consense_global_config');
+    const hasEnvKey = !!import.meta.env.VITE_OPENAI_API_KEY;
+
+    // Default config object
+    const defaultConfig = {
+      provider: hasEnvKey ? 'openai' : 'mock', // Prefer OpenAI if env key exists
+      openAIKey: import.meta.env.VITE_OPENAI_API_KEY || ''
+    };
+
+    if (saved) {
+      const parsed = JSON.parse(saved);
+      // We merged saved config but if the user has an ENV key and no explicit saved provider (or default mock), we might want to prioritize the env key presence? 
+      // For safety, let's just respect the saved config but ensure the key is refreshed from env if missing in saved
+      return {
+        ...defaultConfig,
+        ...parsed,
+        openAIKey: parsed.openAIKey || defaultConfig.openAIKey,
+        // If saved provider is mock but we found a key in env (and maybe this is a fresh run logic), consider auto-switching? 
+        // Let's stick to: if saved exists, use saved. If not, use defaultConfig (which prefers openai).
+      };
+    }
+    return defaultConfig;
+  })
+
+  // Save config on change
+  useEffect(() => {
+    localStorage.setItem('consense_global_config', JSON.stringify(globalConfig))
+  }, [globalConfig])
 
   // Auth State
   const [currentUser, setCurrentUser] = useState(null)
   // UI State
   const [isAuthModalOpen, setIsAuthModalOpen] = useState(false)
+  const [uiState, setUiState] = useState({
+    depth: 'mid',
+    tone: 'Neutral',
+    output_format: 'markdown',
+    abstraction_level: 'mid',
+    exclude_hype: false,
+    dialect: 'gpt',
+    model_family: 'openai',
+    use_ollama: false,
+    mode: 'CREATIVE' // Default mode
+  })
   const [showDiff, setShowDiff] = useState(false)
 
   // Create a new session (Moved up for hosting)
@@ -976,19 +1012,31 @@ function App() {
     // Call Service
     let draft;
     try {
-      if (uiState.use_ollama) {
+      if (globalConfig.provider === 'openai') {
+        if (!globalConfig.openAIKey) {
+          alert("Please set your OpenAI API Key in Settings.");
+          setIsGenerating(false);
+          return;
+        }
+        draft = await OpenAIService.generateDraft(query, uiState, globalConfig.openAIKey);
+      } else if (globalConfig.provider === 'ollama') {
         draft = await OllamaService.generateDraft(query, uiState);
       } else {
         draft = await MockAIService.generateInitialDraft(query, uiState);
       }
     } catch (err) {
       console.error("Generation failed:", err);
-      // Fallback to Mock if Ollama fails? Or just alert. Let's fallback for robustness but warn.
-      if (uiState.use_ollama) {
+      // Fallback
+      if (globalConfig.provider === 'openai') {
+        alert(`OpenAI Error: ${err.message}`);
+        setIsGenerating(false);
+        return;
+      }
+      if (globalConfig.provider === 'ollama') {
         alert("Ollama connection failed. Falling back to simulation. Ensure Ollama is running on port 11434.");
         draft = await MockAIService.generateInitialDraft(query, uiState);
       } else {
-        return; // Should not happen for mock
+        return;
       }
     }
 
@@ -1001,7 +1049,15 @@ function App() {
 
     updateCurrentSession(newHistoryItem)
 
-    setRecommendations(MockAIService.getRecommendations(draft))
+    if (draft) {
+      try {
+        setRecommendations(MockAIService.getRecommendations(draft) || []);
+      } catch (e) {
+        console.warn("Recommendation engine failed:", e);
+        setRecommendations([]);
+      }
+    }
+
     setIsGenerating(false)
     setQuery('')
   }
@@ -1015,14 +1071,21 @@ function App() {
     // Call Service to refine existing draft
     let refinedDraft;
     try {
-      if (uiState.use_ollama) {
+      if (globalConfig.provider === 'openai') {
+        refinedDraft = await OpenAIService.refineDraft(currentItem.draft, refinementType, uiState, globalConfig.openAIKey);
+      } else if (globalConfig.provider === 'ollama') {
         refinedDraft = await OllamaService.refineDraft(currentItem.draft, refinementType, uiState);
       } else {
         refinedDraft = await MockAIService.refineDraft(currentItem.draft, refinementType, uiState);
       }
     } catch (err) {
       console.error("Refinement failed:", err);
-      if (uiState.use_ollama) {
+      if (globalConfig.provider === 'openai') {
+        alert(`OpenAI Error: ${err.message}`);
+        setIsGenerating(false);
+        return;
+      }
+      if (globalConfig.provider === 'ollama') {
         alert("Ollama refinement failed. Falling back to simulation.");
         refinedDraft = await MockAIService.refineDraft(currentItem.draft, refinementType, uiState);
       } else {
@@ -1156,6 +1219,32 @@ function App() {
           title="Mastery Guide"
         >
           <HelpCircle size={20} />
+        </button>
+
+        <button
+          onClick={() => setIsSettingsModalOpen(true)}
+          style={{
+            background: 'rgba(255,255,255,0.08)',
+            border: '1px solid rgba(255,255,255,0.15)',
+            borderRadius: '8px',
+            padding: '10px',
+            color: '#666',
+            cursor: 'pointer',
+            display: 'flex', alignItems: 'center',
+            backdropFilter: 'blur(12px)',
+            transition: 'all 0.2s ease'
+          }}
+          onMouseOver={(e) => {
+            e.currentTarget.style.color = '#fff';
+            e.currentTarget.style.background = 'rgba(255,255,255,0.12)';
+          }}
+          onMouseOut={(e) => {
+            e.currentTarget.style.color = '#666';
+            e.currentTarget.style.background = 'rgba(255,255,255,0.08)';
+          }}
+          title="Settings & API Key"
+        >
+          <Settings size={20} />
         </button>
 
         <button
@@ -1328,6 +1417,52 @@ function App() {
               gap: '12px',
               boxShadow: '0 20px 40px -10px rgba(0,0,0,0.5)'
             }}>
+
+              {/* MODE SELECTOR (Only show if new session/no history to avoid clutter, or maybe always? Always is better for 'pivot') */}
+              <div style={{
+                display: 'flex', gap: '8px', paddingBottom: '12px', overflowX: 'auto',
+                borderBottom: '1px solid rgba(255,255,255,0.05)',
+                marginBottom: '4px'
+              }}>
+                {Object.values(PROMPT_MODES).map(mode => {
+                  const isActive = uiState.mode === mode.id.toUpperCase();
+                  const ModeIcon = mode.icon;
+                  return (
+                    <button
+                      key={mode.id}
+                      type="button"
+                      onClick={() => {
+                        // Apply Mode Defaults to UI State immediately
+                        setUiState(prev => ({
+                          ...prev,
+                          mode: mode.id.toUpperCase(),
+                          tone: mode.defaults.tone,
+                          depth: mode.defaults.depth,
+                          abstraction_level: mode.defaults.abstraction // Map 'abstraction' to 'abstraction_level'
+                        }));
+                      }}
+                      style={{
+                        display: 'flex', alignItems: 'center', gap: '6px',
+                        background: isActive ? `rgba(${parseInt(mode.color.slice(1, 3), 16)}, ${parseInt(mode.color.slice(3, 5), 16)}, ${parseInt(mode.color.slice(5, 7), 16)}, 0.15)` : 'rgba(255,255,255,0.03)',
+                        border: isActive ? `1px solid ${mode.color}` : '1px solid rgba(255,255,255,0.1)',
+                        borderRadius: '20px',
+                        padding: '6px 12px',
+                        color: isActive ? mode.color : '#666',
+                        fontSize: '0.75rem',
+                        fontWeight: isActive ? 600 : 400,
+                        cursor: 'pointer',
+                        transition: 'all 0.2s',
+                        whiteSpace: 'nowrap'
+                      }}
+                      title={mode.description}
+                    >
+                      <ModeIcon size={12} />
+                      {mode.label}
+                    </button>
+                  )
+                })}
+              </div>
+
               <div style={{ display: 'flex', alignItems: 'flex-start', gap: '12px' }}>
                 <div style={{
                   color: isFocused ? '#fff' : '#666',
@@ -1533,6 +1668,43 @@ function App() {
                         showDiff={showDiff}
                       />
                     </div>
+
+                    {/* WHY THIS WORKS */}
+                    {currentItem.draft.why_it_works && currentItem.draft.why_it_works.length > 0 && (
+                      <div style={{ marginTop: '24px', padding: '16px', background: 'rgba(74, 222, 128, 0.05)', borderRadius: '8px', border: '1px solid rgba(74, 222, 128, 0.2)' }}>
+                        <div style={{ fontSize: '0.7rem', color: '#4ade80', letterSpacing: '0.1em', fontWeight: 'bold', marginBottom: '8px', textTransform: 'uppercase' }}>
+                          Why This Works
+                        </div>
+                        <ul style={{ margin: 0, paddingLeft: '20px', color: '#ccc', fontSize: '0.9rem' }}>
+                          {currentItem.draft.why_it_works.map((point, idx) => (
+                            <li key={idx} style={{ marginBottom: '4px' }}>{point}</li>
+                          ))}
+                        </ul>
+                      </div>
+                    )}
+
+                    {/* VARIATIONS */}
+                    {currentItem.draft.prompt_variations && currentItem.draft.prompt_variations.length > 0 && (
+                      <div style={{ marginTop: '24px' }}>
+                        <div style={{ fontSize: '0.7rem', color: '#666', letterSpacing: '0.1em', fontWeight: 'bold', marginBottom: '12px', textTransform: 'uppercase' }}>
+                          Alternative Variations
+                        </div>
+                        <div style={{ display: 'grid', gridTemplateColumns: '1fr', gap: '12px' }}>
+                          {currentItem.draft.prompt_variations.map((v, idx) => (
+                            <div key={idx} style={{ background: 'rgba(255,255,255,0.03)', padding: '16px', borderRadius: '8px', border: '1px solid rgba(255,255,255,0.05)' }}>
+                              <div style={{ fontSize: '0.8rem', color: '#fff', fontWeight: 'bold', marginBottom: '8px' }}>{v.label}</div>
+                              <div style={{ fontSize: '0.85rem', color: '#aaa', fontFamily: 'monospace', whiteSpace: 'pre-wrap' }}>{v.prompt.slice(0, 150)}...</div>
+                              <button
+                                onClick={() => navigator.clipboard.writeText(v.prompt)}
+                                style={{ marginTop: '8px', background: 'transparent', border: '1px solid #333', color: '#888', padding: '4px 8px', borderRadius: '4px', fontSize: '0.7rem', cursor: 'pointer' }}
+                              >
+                                Copy Full
+                              </button>
+                            </div>
+                          ))}
+                        </div>
+                      </div>
+                    )}
                   </div>
 
                   {/* Footer / Actions */}
@@ -1664,6 +1836,12 @@ function App() {
       <UserGuide
         isOpen={isUserGuideOpen}
         onClose={() => setIsUserGuideOpen(false)}
+      />
+      <SettingsModal
+        isOpen={isSettingsModalOpen}
+        onClose={() => setIsSettingsModalOpen(false)}
+        config={globalConfig}
+        onSave={setGlobalConfig}
       />
     </div>
   )

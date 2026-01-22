@@ -68,6 +68,9 @@ export const MCP = {
         },
         composition: {
             layers: []
+        },
+        negatives: {
+            exclude: []
         }
     }),
 
@@ -92,24 +95,33 @@ export const MCP = {
 **Intent:** ${mcp.intent.type.toUpperCase()} / ${mcp.intent.depth} / ${mcp.intent.perspective}
 **Domain:** ${mcp.domain.subject} (${mcp.domain.realism})
 **Focus:** ${mcp.domain.focus.join(", ")}
+${mcp.intent.audience ? `**Audience:** ${mcp.intent.audience}` : ""}
 
 # 2. CORE OBJECTIVE
 ${mcp.intent.primary_goal}
 
 # 3. OUTPUT SPECIFICATION
 **Target:** ${mcp.output_target.medium.toUpperCase()} (${mcp.output_target.model_family})
+${mcp.output_target.format ? `**Format:** ${mcp.output_target.format}` : ""}
 ${mcp.output_target.model_hint ? `**Hint:** ${mcp.output_target.model_hint}` : ""}
 
 # 4. CONSTRAINTS & TONE
 **Tone:** ${mcp.constraints.tone.join(", ")}
 **Abstraction:** ${mcp.constraints.abstraction_level}
 **Verbosity:** ${mcp.constraints.verbosity}
+${mcp.constraints.creativity ? `**Creativity vs Precision:** ${mcp.constraints.creativity}` : ""}
+${mcp.constraints.length ? `**Target Length:** ${mcp.constraints.length}` : ""}
 
 # 5. COMPOSITION LAYERS
 The solution must be composed of the following structural layers:
 ${mcp.composition.layers.map(l => `- ${l}`).join('\n')}
 
-${mcp.rendering_hints ? `# 6. RENDERING INSTRUCTIONS
+${mcp.negatives && mcp.negatives.exclude.length > 0 ? `# 6. NEGATIVE PROMPT (AVOID)
+Strictly avoid the following tropes, words, and patterns:
+${mcp.negatives.exclude.map(n => `- ${n}`).join('\n')}
+` : ""}
+
+${mcp.rendering_hints ? `# 7. RENDERING INSTRUCTIONS
 Sentence Length: ${mcp.rendering_hints.sentence_length || "Varied"}
 Metaphors: ${mcp.rendering_hints.allow_metaphor ? "Allowed" : "Restricted"}
 ` : ""}

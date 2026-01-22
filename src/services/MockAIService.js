@@ -1,5 +1,6 @@
 import { MCP } from './MCPService';
 import { MCPBuilder } from './mcpBuilder';
+import { PROMPT_MODES } from '../data/PromptModes';
 import { renderForLLM } from '../renderers/llmRenderer';
 
 export const MockAIService = {
@@ -11,7 +12,13 @@ export const MockAIService = {
 
         // 1. BUILD MCP (Source of Truth)
         // Uses the Builder Service which encapsulates context detection & defaults
-        const mcp = MCPBuilder.buildFromInput(userQuery, uiState);
+        const modeKey = (uiState.mode || 'CREATIVE').toUpperCase();
+        const modeConfig = Object.values(PROMPT_MODES).find(m => m.id.toUpperCase() === modeKey) || PROMPT_MODES.CREATIVE;
+        const augmentedState = {
+            ...modeConfig.defaults,
+            ...uiState
+        };
+        const mcp = MCPBuilder.buildFromInput(userQuery, augmentedState);
 
         // 2. RENDER (Model-Specific)
         const expansionPrompt = renderForLLM(mcp);

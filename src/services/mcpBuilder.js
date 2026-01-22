@@ -57,6 +57,17 @@ export const MCPBuilder = {
         }
 
         // 3. OVERRIDE WITH UI STATE (The "System Priority")
+        // Force Perspective based on Mode if not explicitly "heuristic" dependent
+        // This ensures "Creative Director" gets "cinematic" perspective, etc.
+        if (uiState.mode) {
+            const mode = uiState.mode.toUpperCase();
+            if (mode === 'CREATIVE') mcp.intent.perspective = 'cinematic';
+            if (mode === 'DEVELOPER') mcp.intent.perspective = 'technical';
+            if (mode === 'RESEARCH') mcp.intent.perspective = 'editorial';
+            if (mode === 'GROWTH') mcp.intent.perspective = 'marketing'; // Custom perspective
+            if (mode === 'EXPERIMENTAL') mcp.intent.perspective = 'abstract';
+        }
+
         if (uiState.depth) mcp.intent.depth = uiState.depth;
         if (uiState.tone) {
             // If tone is passed as array or string, handle it
@@ -66,10 +77,20 @@ export const MCPBuilder = {
         if (uiState.model_family) mcp.output_target.model_family = uiState.model_family;
         if (uiState.dialect) mcp.output_target.dialect = uiState.dialect; // 'gpt' or 'claude'
 
-        // "No hype" toggle -> add common hype words to exclude
+        // NEW: Extended Constraints
+        if (uiState.output_format) mcp.output_target.format = uiState.output_format;
+        if (uiState.target_audience) mcp.intent.audience = uiState.target_audience;
+        if (uiState.length) mcp.constraints.length = uiState.length;
+        if (uiState.creativity) mcp.constraints.creativity = uiState.creativity; // e.g., "High Creativity", "Precision First"
+
+        // Initialize Negatives
+        mcp.negatives = mcp.negatives || { exclude: [] };
+        // Common Negatives requested by standard
+        mcp.negatives.exclude.push("Generic phrasing", "Clichés", "Buzzwords", "Redundant explanations", "Robotic transitions");
+
+        // "No hype" toggle -> add extra hype words
         if (uiState.exclude_hype) {
-            mcp.negatives = mcp.negatives || { exclude: [] };
-            mcp.negatives.exclude.push("game-changing", "revolutionary", "cutting-edge", "disruptive");
+            mcp.negatives.exclude.push("game-changing", "revolutionary", "cutting-edge", "disruptive", "unleash", "elevate");
         }
 
         return mcp;

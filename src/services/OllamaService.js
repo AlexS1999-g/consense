@@ -1,6 +1,8 @@
 import { MCP } from './MCPService';
 import { MCPBuilder } from './mcpBuilder';
 import { renderForLLM } from '../renderers/llmRenderer';
+import { DiagnosticService } from './DiagnosticService';
+import { PromptParser } from './PromptParser';
 
 export const OllamaService = {
     // Check if Ollama is reachable
@@ -16,16 +18,34 @@ export const OllamaService = {
 
     generateDraft: async (userQuery, uiState = {}) => {
         // 1. Build MCP (Client-side logic still holds!)
-        const mcp = MCPBuilder.buildFromInput(userQuery, uiState);
-        const systemPrompt = `You are an expert Prompt Engineer. Your goal is to expand the user's intent into a highly detailed, professional prompt optimized for advanced LLMs.
+        const modeKey = (uiState.mode || 'CREATIVE').toUpperCase();
+        const modeConfig = Object.values(PROMPT_MODES).find(m => m.id.toUpperCase() === modeKey) || PROMPT_MODES.CREATIVE;
+        const augmentedState = {
+            ...modeConfig.defaults,
+            ...uiState
+        };
+        const mcp = MCPBuilder.buildFromInput(userQuery, augmentedState);
+        const diagnostics = DiagnosticService.analyze(userQuery);
+
+        const systemPrompt = `${modeConfig.systemInstruction}
+
+You are an expert Prompt Engineer. Your goal is to expand the user's intent into a highly detailed, professional prompt optimized for advanced LLMs.
     
-CONTEXT MODEL:
+DRAFT INPUT (GENERIC STARTING POINT):
 ${JSON.stringify(mcp, null, 2)}
 
+DIAGNOSTIC REPORT:
+${JSON.stringify(diagnostics, null, 2)}
+
 INSTRUCTIONS:
-1. Analyze the Context Model above.
-2. Write a single, comprehensive Master Prompt that incorporates all constraints, tones, and requirements.
-3. Do NOT output any conversational text. Output ONLY the final prompt.
+1. Treat the "DRAFT INPUT" above as a generic placeholder. DO NOT copy it verbatim.
+2. Review the Diagnostic Report for missing or vague details.
+3. **MANDATORY RE-WRITE:** You must RE-GENERATE the entire Context Model, Objective, and Layers to match your specific Persona (${modeConfig.label}).
+   - **Tone:** If input says "Neutral" but you are a Creative Director, CHANGE IT to "Visionary" or "Cinematic".
+   - **Audience:** Invent a specific audience (e.g., "High-Net-Worth Collectors" instead of "General Public").
+   - **Objective:** Rewrite the "Core Objective" to be specific and ambitious.
+   - **Layers:** Invent specific features relevant to the domain (e.g. "360 Car Configurator" instead of "Multimedia Gallery").
+4. Output the full Master Prompt structure with your NEW, SPECIFIC values.
 `;
 
         // 2. Call Ollama
@@ -52,7 +72,7 @@ INSTRUCTIONS:
             const generatedText = data.response;
 
             // 3. Construct Contract
-            return {
+            const rawDraft = {
                 prompt_mcp: mcp,
                 rendered_prompt: generatedText, // The "Real" generation!
                 metadata: {
@@ -71,6 +91,8 @@ INSTRUCTIONS:
                 functional_components: mcp.composition.layers,
                 expansion_prompt: generatedText
             };
+
+            return PromptParser.parse(generatedText, rawDraft);
 
         } catch (error) {
             console.error("Ollama Error:", error);
